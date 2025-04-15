@@ -1,9 +1,8 @@
-[package]
-name = "MCPP"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+member = ["mcpp_core", "evalater_gui"]
+members = [ "evalater_gui","mcpp_core"]
 
-[dependencies]
-clipboard = "0.5.0"
-eframe = "0.31.1"
-egui = "0.31.1"
+[workspace.package]
+version = "0.0.1"
+authors = ["Kinokov Shotaskovich"]
+description = "Integrated crafttable of MC++ ecosystem"

@@ -3,15 +3,6 @@
 version = 4
 
 [[package]]
-name = "MCPP"
-version = "0.1.0"
-dependencies = [
- "clipboard",
- "eframe",
- "egui",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1006,6 +997,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 
 [[package]]
+name = "evalater_gui"
+version = "0.0.1"
+dependencies = [
+ "clipboard",
+ "eframe",
+ "egui",
+ "mcpp_core",
+]
+
+[[package]]
 name = "event-listener"
 version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1609,9 +1610,9 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "libc"
-version = "0.2.171"
+version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
+checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
 name = "libloading"
@@ -1682,6 +1683,10 @@ checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "mcpp_core"
+version = "0.0.1"
 
 [[package]]
 name = "memchr"

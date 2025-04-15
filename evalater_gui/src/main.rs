@@ -1,15 +1,13 @@
 #![windows_subsystem = "windows"]
 
-mod compiler;
-
-pub use compiler::{evaluater, tokeniser};
-
 use eframe::{egui::*, NativeOptions};
 use clipboard::{ClipboardContext, ClipboardProvider};
+use mcpp_core::{evaluater, tokeniser, compiler};
 
 #[derive(Default, Clone)]
 pub struct MyApp {
     text: String,
+    error: String,
 }
 
 impl eframe::App for MyApp {
@@ -22,10 +20,18 @@ impl eframe::App for MyApp {
                 if ui.button("Compile then Copy").clicked() {
                     let mut compiler = compiler::Compiler::new();
                     let formula = tokeniser::tokenize(self.text.clone());
-                    let result = evaluater::evaluate(&mut compiler, &formula).join("\n");
-                    let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                    ctx.set_contents(result.to_owned()).unwrap();
+                    match evaluater::evaluate(&mut compiler, &formula) {
+                        Ok(o) => {
+                            let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+                            ctx.set_contents(o.join("\n")).unwrap();
+                        },
+                        Err(e) => {self.error = format!("{}", e);}
+                    }
                 }
+                ui.label(
+                    RichText::from(self.error.clone())
+                        .color(Color32::LIGHT_RED)
+                );
             });
         });
     }

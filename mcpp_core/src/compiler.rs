@@ -5,7 +5,7 @@ pub mod tokeniser;
 
 use evaluater::{Scoreboard, Types};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Identifier and literal
     Ident(String), // variable / function name
@@ -57,6 +57,26 @@ pub enum Token {
     Fn, If, Else, While, For, // Sentense specifiers
     IntType, FltType, BlnType, NoneType, // Types. Float containt how many decimal places does it ensures.
     Return, // Returning a value
+}
+
+pub enum CompileError {
+    InvalidTokenInAFormula(Token),
+    EmptyFormulaGiven,
+    UndefinedIdentifierReferenced(String),
+    UnknownTypeSpecialised(Token),
+    LHSDoesntSatisfyValidFormat,
+}
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = match self {
+            CompileError::InvalidTokenInAFormula(t) => format!("An invalid token, {:?} exists in the formula.", t),
+            CompileError::EmptyFormulaGiven => String::from("An empty formula was given."),
+            CompileError::UndefinedIdentifierReferenced(id) => format!("A identifer, {} was referenced but undefined.", id),
+            CompileError::UnknownTypeSpecialised(t) => format!("A token, {:?} isn't valid as type specifier.", t),
+            CompileError::LHSDoesntSatisfyValidFormat => String::from("The left hand side doesn't satisfy the valid format.")
+        };
+        write!(f, "{}", result)
+    }
 }
 
 pub struct Compiler {

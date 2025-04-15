@@ -2,6 +2,7 @@ mod scoreboard;
 
 use std::vec;
 
+use super::CompileError;
 use super::Token;
 use super::Compiler;
 
@@ -71,9 +72,13 @@ fn is_operator(given:&FToken) -> bool {
         _ => false
     }
 }
-fn to_rpn(input:&Vec<FToken>) -> Vec<&FToken> {
+fn to_rpn(input:&Vec<FToken>) -> Result<Vec<&FToken>, CompileError> {
     let mut queue:Vec<&FToken> = Vec::new();
     let mut stack:Vec<&FToken> = Vec::new();
+
+    if input.is_empty() {
+        return Err(CompileError::EmptyFormulaGiven);
+    }
 
     for current in input.iter() {
         if is_value(current) {
@@ -107,7 +112,7 @@ fn to_rpn(input:&Vec<FToken>) -> Vec<&FToken> {
                     }
                 },
                 _ => {
-                    panic!("Invalid formula. The token, {:?} is not value nor operator.", current);
+                    unreachable!()
                 }
             }
         }
@@ -115,7 +120,7 @@ fn to_rpn(input:&Vec<FToken>) -> Vec<&FToken> {
     while !stack.is_empty() {
         queue.push(&stack.pop().unwrap());
     }
-    queue
+    Ok(queue)
 }
 fn get_datatype(token:&FToken) -> Option<Types> {
     match token {
@@ -197,79 +202,79 @@ fn to_ftoken(compiler:&Compiler, token:&Token) -> Option<FToken> {
     }
 }
 
-pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Vec<String> {
-    let to_f_formula = |f: &Vec<&Token>| {
-        f
-            .iter()
-            .map(|t| to_ftoken(compiler, t).expect(format!("Invalid token in formula. The token -> {:?}", t).as_str()))
-            .collect::<Vec<FToken>>()
-    };
-    let formula_datatype = |from:&Vec<&Token>| {
-        get_datatype(
-            to_rpn(&to_f_formula(from))
-                .iter()
-                .filter(|t| is_value(t))
-                .collect::<Vec<&&FToken>>()
-                .get(0)
-                .unwrap()
-        ).unwrap()
-    };
+pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<String>, CompileError> {
+    let rhs;
+    let lhs;
 
-    let mut rhs:Vec<&Token> = Vec::new();
-    let lhs = if let (Some(Token::Ident(i)), Some(Token::Asn)) = (formula.get(0), formula.get(1)) {
-        // Existing pattern
-        // Example: a = 100 (A variable, a is predefined)
-        rhs = formula[2..].iter().collect::<Vec<&Token>>();
-        Some(compiler.get_variable(i).expect("Referencing variable is undefined.").clone())
-    } else if let (
-        Some(Token::Let),
-        Some(Token::Ident(i)),
-        Some(Token::Asn)
-    ) = (formula.get(0), formula.get(1), formula.get(2)) {
-        // Untyped pattern
-        // Example: let a = 100
-        rhs = formula[3..].iter().collect::<Vec<&Token>>();
-        Some(Scoreboard {
-            name: i.clone(),
-            scope: compiler.scope.clone(),
-            datatype: formula_datatype(&rhs)
-        })
-    } else if let (
-        Some(Token::Let),
-        Some(Token::Ident(i)),
-        Some(Token::Colon),
-        Some(datatype),
-        Some(Token::Asn)
-    ) = (formula.get(0), formula.get(1), formula.get(2), formula.get(3), formula.get(4)) {
-        // Typed pattern
-        // Example: let a:int = 100
-        rhs = formula[5..].iter().collect::<Vec<&Token>>();
-        Some(
-            Scoreboard {
-                name: i.clone(),
-                scope: compiler.scope.clone(),
-                datatype: match datatype {
-                    Token::IntType => Types::Int,
-                    Token::FltType => Types::Float,
-                    _ => panic!("Invalid datatype!")
+    {
+        let mut is_after_eq:bool = false;
+        let mut rhs_temp:Vec<&Token> = Vec::new();
+        let mut lhs_temp:Vec<&Token> = Vec::new();
+
+        for t in formula {
+            if let Token::Asn = t {
+                is_after_eq = true
+            } else {
+                if is_after_eq {
+                    rhs_temp.push(t)
+                } else {
+                    lhs_temp.push(t)
                 }
             }
-        )
-    } else {
-        rhs = formula.iter().collect::<Vec<&Token>>();
-        None
-    };
-
-    let store_to = match lhs {
-        Some(s) => s,
-        None => Scoreboard {
-            name: "EVAL".to_string(),
-            scope: vec!["TEMP".to_string()],
-            datatype: formula_datatype(&rhs)
         }
+
+        lhs = if lhs_temp.is_empty() {
+            None
+        } else {
+            Some(lhs_temp)
+        };
+        rhs = rhs_temp;
+    }
+    
+    let mut f_formula = Vec::new();
+    for t in rhs {
+        f_formula.push(match to_ftoken(compiler, t) {
+            Some(o) => o,
+            None => return Err(CompileError::InvalidTokenInAFormula(t.clone()))
+        })
+    }
+    let f_formula = f_formula;
+    let rpn = &to_rpn(&f_formula)?;
+    let formula_datatype = get_datatype(rpn.get(0).unwrap()).unwrap();
+    let eval_temp = Scoreboard {
+        name: "EVAL".to_string(),
+        scope: compiler.scope.clone(),
+        datatype: formula_datatype.clone()
+    };
+    let store_to = match lhs {
+        Some(s) => {
+            if let [Token::Ident(t)] = &s[..] {
+                match compiler.get_variable(&t) {
+                    Some(s) => s,
+                    None => return Err(CompileError::UndefinedIdentifierReferenced(t.clone()))
+                }
+            } else if let [Token::Let, Token::Ident(t)] = &s[..] {
+                &Scoreboard {
+                    name: t.clone(),
+                    scope: compiler.scope.clone(),
+                    datatype: formula_datatype
+                }
+            } else if let [Token::Let, Token::Ident(id), Token::Colon, t] = &s[..] {
+                &Scoreboard {
+                    name: id.clone(),
+                    scope: compiler.scope.clone(),
+                    datatype: match t {
+                        Token::IntType => Types::Int,
+                        Token::FltType => Types::Float,
+                        _ => return Err(CompileError::UnknownTypeSpecialised(t.to_owned().clone()))
+                    }
+                }
+            } else {
+                return Err(CompileError::LHSDoesntSatisfyValidFormat);
+            }
+        },
+        None => &eval_temp
     };
 
-    let f_formula = to_f_formula(&rhs);
-    let rpn = &to_rpn(&f_formula);
-    eval_rpn(&store_to, rpn)
+    Ok(eval_rpn(&store_to, rpn))
 }
