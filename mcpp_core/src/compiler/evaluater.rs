@@ -254,11 +254,15 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<Strin
                     None => return Err(CompileError::UndefinedIdentifierReferenced(t.clone()))
                 }
             } else if let [Token::Let, Token::Ident(t)] = &s[..] {
-                &Scoreboard {
-                    name: t.clone(),
-                    scope: compiler.scope.clone(),
-                    datatype: formula_datatype
-                }
+                let _result = &compiler.local_variables.insert(
+                    t.clone(),
+                    Scoreboard {
+                        name: t.clone(),
+                        scope: compiler.scope.clone(),
+                        datatype: formula_datatype
+                    }
+                );
+                compiler.get_variable(&t).unwrap()
             } else if let [Token::Let, Token::Ident(id), Token::Colon, t] = &s[..] {
                 &Scoreboard {
                     name: id.clone(),

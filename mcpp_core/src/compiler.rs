@@ -3,7 +3,7 @@ use std::{collections::HashMap, vec};
 pub mod evaluater;
 pub mod tokeniser;
 
-use evaluater::{Scoreboard, Types};
+use evaluater::{evaluate, Scoreboard, Types};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -107,5 +107,31 @@ impl Compiler {
                 datatype: *data_type
             }
         );
+    }
+    pub fn compile(&mut self, input:&str) -> Result<String, CompileError> {
+        let lines = {
+            let mut lines:Vec<Vec<Token>> = Vec::new();
+            let mut current_line:Vec<Token> = Vec::new();
+            for t in tokeniser::tokenize(input.to_string()) {
+                if let Token::Semicolon = t {
+                    lines.push(current_line.clone());
+                    current_line.clear();
+                } else {
+                    current_line.push(t.clone());
+                }
+            }
+            if !current_line.is_empty() {
+                lines.push(current_line.clone());
+            }
+            lines
+        };
+        let result = {
+            let mut result = Vec::new();
+            for l in lines {
+                result.push(evaluate(self, &l)?.join("\n"))
+            }
+            result
+        }.join("\n");
+        Ok(result)
     }
 }

@@ -1,8 +1,8 @@
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"]
 
 use eframe::{egui::*, NativeOptions};
 use clipboard::{ClipboardContext, ClipboardProvider};
-use mcpp_core::{evaluater, tokeniser, compiler};
+use mcpp_core::compiler;
 
 #[derive(Default, Clone)]
 pub struct MyApp {
@@ -14,16 +14,14 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(&ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label("2025/04/13 by Kinokov Shotaskovich");
+                ui.label("2025/04/13 by Mikami Kousei, NIT Tomakomai");
                 ui.label("Evaluater");
                 ui.add_sized(ui.available_size() - Vec2 { x: 0., y: 40. }, egui::TextEdit::multiline(&mut self.text));
                 if ui.button("Compile then Copy").clicked() {
-                    let mut compiler = compiler::Compiler::new();
-                    let formula = tokeniser::tokenize(self.text.clone());
-                    match evaluater::evaluate(&mut compiler, &formula) {
+                    match compiler::Compiler::new().compile(&self.text) {
                         Ok(o) => {
                             let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                            ctx.set_contents(o.join("\n")).unwrap();
+                            ctx.set_contents(o).unwrap();
                         },
                         Err(e) => {self.error = format!("{}", e);}
                     }
@@ -43,7 +41,6 @@ fn main() {
             .with_inner_size([320.0, 240.0])
             .with_min_inner_size([320.0, 240.0])
             .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../icon.png")).unwrap()),
-        
         ..Default::default()
     };
 
