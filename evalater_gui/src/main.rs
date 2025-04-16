@@ -14,7 +14,7 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(&ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label("2025/04/13 by Mikami Kousei, NIT Tomakomai");
+                ui.label("2025/04/13 by Kinokov Shotaskovich");
                 ui.label("Evaluater");
                 ui.add_sized(ui.available_size() - Vec2 { x: 0., y: 40. }, egui::TextEdit::multiline(&mut self.text));
                 if ui.button("Compile then Copy").clicked() {
