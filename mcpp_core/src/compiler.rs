@@ -58,13 +58,16 @@ pub enum Token {
     IntType, FltType, BlnType, NoneType, // Types. Float containt how many decimal places does it ensures.
     Return, // Returning a value
 }
-
+#[derive(Debug)]
 pub enum CompileError {
     InvalidTokenInAFormula(Token),
     EmptyFormulaGiven,
     UndefinedIdentifierReferenced(String),
     UnknownTypeSpecialised(Token),
     LHSDoesntSatisfyValidFormat,
+    InvalidRHS(evaluater::FToken),
+    TheTokenIsntValue(evaluater::FToken),
+    InvalidFormulaStructure(String)
 }
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,7 +76,10 @@ impl std::fmt::Display for CompileError {
             CompileError::EmptyFormulaGiven => String::from("An empty formula was given."),
             CompileError::UndefinedIdentifierReferenced(id) => format!("A identifer, {} was referenced but undefined.", id),
             CompileError::UnknownTypeSpecialised(t) => format!("A token, {:?} isn't valid as type specifier.", t),
-            CompileError::LHSDoesntSatisfyValidFormat => String::from("The left hand side doesn't satisfy the valid format.")
+            CompileError::LHSDoesntSatisfyValidFormat => String::from("The left hand side doesn't satisfy the valid format."),
+            CompileError::InvalidRHS(t) => format!("The rhs, {} can't be assined onto the lhs.", t),
+            CompileError::TheTokenIsntValue(t) => format!("The token, {:?} isn't value.", t),
+            CompileError::InvalidFormulaStructure(s) => s.clone()
         };
         write!(f, "{}", result)
     }
@@ -128,7 +134,7 @@ impl Compiler {
         let result = {
             let mut result = Vec::new();
             for l in lines {
-                result.push(evaluate(self, &l)?.join("\n"))
+                result.push(evaluate(self, &l)?)
             }
             result
         }.join("\n");

@@ -1,7 +1,5 @@
 mod scoreboard;
 
-use std::vec;
-
 use super::CompileError;
 use super::Token;
 use super::Compiler;
@@ -42,13 +40,16 @@ impl std::fmt::Display for Operator {
     }
 }
 
-fn get_const(value:&FToken) -> Option<(String, Scoreboard)> {
+fn get_const(value:&FToken) -> Result<(String, Scoreboard), CompileError> {
     let score = Scoreboard {
         name : value.to_string(),
         scope : vec!["CONSTANT".to_string()],
-        datatype : get_datatype(value)?
+        datatype : match get_datatype(value) {
+            Some(s) => s,
+            None => return Err(CompileError::TheTokenIsntValue(value.clone()))
+        }
     };
-    Some((score.assign(&value), score))
+    Ok((score.assign(&value)?, score))
 }
 fn get_priority(given:&FToken) -> Option<u32> {
     match given {
@@ -72,7 +73,7 @@ fn is_operator(given:&FToken) -> bool {
         _ => false
     }
 }
-fn to_rpn(input:&Vec<FToken>) -> Result<Vec<&FToken>, CompileError> {
+fn to_rpn(input:&Vec<FToken>) -> Result<Vec<FToken>, CompileError> {
     let mut queue:Vec<&FToken> = Vec::new();
     let mut stack:Vec<&FToken> = Vec::new();
 
@@ -120,7 +121,7 @@ fn to_rpn(input:&Vec<FToken>) -> Result<Vec<&FToken>, CompileError> {
     while !stack.is_empty() {
         queue.push(&stack.pop().unwrap());
     }
-    Ok(queue)
+    Ok(queue.iter().map(|t| (**t).clone()).collect::<Vec<FToken>>())
 }
 fn get_datatype(token:&FToken) -> Option<Types> {
     match token {
@@ -131,52 +132,46 @@ fn get_datatype(token:&FToken) -> Option<Types> {
     }
 }
 
-fn eval_rpn(store_to:&Scoreboard, rpn:&Vec<&FToken>) -> Vec<String> {
-    let mut res = Vec::new();
-    let mut queue = Vec::new();
-    let mut rpn = rpn.clone();
-    
-    rpn.reverse();
+fn eval_rpn(store_to:&Scoreboard, rpn:&Vec<FToken>) -> Result<String, CompileError> {
+    let mut commands:Vec<String> = Vec::new();
+    let mut stack:Vec<Scoreboard> = Vec::new();
+    let mut temps_to_free:Vec<Scoreboard> = Vec::new();
 
-    let top_element = rpn.pop().unwrap();
-    res.push(store_to.assign(top_element));
-    queue.push(FToken::Scr(store_to.clone()));
-
-    let literal = Scoreboard {
-        name: "LITERAL".to_string(),
-        scope: vec!["TEMP".to_string()],
-        datatype: get_datatype(&top_element).unwrap()
-    };
-
-    while !rpn.is_empty() {
-        let top = rpn.pop().unwrap();
-
-        if is_operator(top) {
-            let operator = match top {
-                FToken::Oper(o) => o,
-                _ => panic!()
-            };
-            let rhs = queue.pop().unwrap();
-            let lhs = queue.pop().unwrap();
-
-            match lhs {
+    for token in rpn.iter() {
+        if is_value(token) {
+            match token {
                 FToken::Scr(s) => {
-                    res.push(s.calc(operator, &rhs));
-                    queue.push(FToken::Scr(s.clone()));
+                    stack.push(s.clone());
                 },
-                _ => {
-                    res.push(literal.assign(&lhs));
-                    res.push(literal.calc(operator, &rhs));
-                    res.push(store_to.assign(&FToken::Scr(literal.clone())));
-                    queue.push(FToken::Scr(store_to.clone()));
-                }
-            };
+                FToken::Int(_) | FToken::Flt(_) | FToken::Bln(_) => {
+                    let temp_val = Scoreboard {
+                        name: format!("EVAL_LIT_{}", scoreboard::generate_random_id(scoreboard::TEMP_ID_LEN)),
+                        scope: vec!["TEMP".to_string()],
+                        datatype: get_datatype(token).unwrap_or_else(|| {
+                            panic!("Literal token has no datatype: {:?}", token)
+                        }),
+                    };
+                    commands.push(temp_val.assign(token)?);
+                    stack.push(temp_val.clone());
+                    temps_to_free.push(temp_val);
+                },
+                _ => unreachable!("is_value returned true for non-value token")
+            }
+        } else if let FToken::Oper(operator) = token {
+            let rhs_board = stack.pop().ok_or(CompileError::InvalidFormulaStructure("Not enough operands for operator".to_string()))?;
+            let lhs_board = stack.pop().ok_or(CompileError::InvalidFormulaStructure("Not enough operands for operator".to_string()))?;
+
+            commands.push(lhs_board.calc(operator, &FToken::Scr(rhs_board.clone()))?);
+            stack.push(lhs_board.clone());
         } else {
-            queue.push(top.clone());
+             unreachable!("Non-operator, non-value token found in RPN: {:?}", token);
         }
     }
-
-    res
+    commands.push(store_to.assign(&&FToken::Scr(stack.pop().unwrap()))?);
+    for tmp in temps_to_free {
+        commands.push(tmp.free());
+    }
+    Ok(commands.join("\n"))
 }
 fn to_ftoken(compiler:&Compiler, token:&Token) -> Option<FToken> {
     match token {
@@ -202,7 +197,7 @@ fn to_ftoken(compiler:&Compiler, token:&Token) -> Option<FToken> {
     }
 }
 
-pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<String>, CompileError> {
+pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<String, CompileError> {
     let rhs;
     let lhs;
 
@@ -246,11 +241,11 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<Strin
         scope: compiler.scope.clone(),
         datatype: formula_datatype.clone()
     };
-    let store_to = match lhs {
+    let store_to:Scoreboard = match lhs {
         Some(s) => {
             if let [Token::Ident(t)] = &s[..] {
                 match compiler.get_variable(&t) {
-                    Some(s) => s,
+                    Some(s) => s.clone(),
                     None => return Err(CompileError::UndefinedIdentifierReferenced(t.clone()))
                 }
             } else if let [Token::Let, Token::Ident(t)] = &s[..] {
@@ -262,9 +257,9 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<Strin
                         datatype: formula_datatype
                     }
                 );
-                compiler.get_variable(&t).unwrap()
+                compiler.get_variable(&t).unwrap().clone()
             } else if let [Token::Let, Token::Ident(id), Token::Colon, t] = &s[..] {
-                &Scoreboard {
+                Scoreboard {
                     name: id.clone(),
                     scope: compiler.scope.clone(),
                     datatype: match t {
@@ -277,8 +272,8 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<Strin
                 return Err(CompileError::LHSDoesntSatisfyValidFormat);
             }
         },
-        None => &eval_temp
+        None => eval_temp
     };
-
-    Ok(eval_rpn(&store_to, rpn))
+    compiler.local_variables.insert(store_to.name.clone(), store_to.clone());
+    Ok(eval_rpn(&store_to, &rpn)?)
 }

@@ -8,6 +8,6 @@ pub fn evaluate(input:&str) -> Result<String, CompileError> {
         evaluater::evaluate(
             &mut compiler,
             &tokeniser::tokenize(input.to_string())
-        )?.join("\n")
+        )?
     )
 }
