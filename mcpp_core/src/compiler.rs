@@ -1,9 +1,14 @@
 use std::{collections::HashMap, vec};
 
+use evaluater::Oper;
+use evaluater::arithmetic_operation::Arithmetic;
+use evaluater::logical_operation::Logical;
+use evaluater::comparison_operation::Comparison;
+
 pub mod evaluater;
 pub mod tokeniser;
 
-use evaluater::{evaluate, Scoreboard, Types};
+use evaluater::{evaluate, FToken, Scoreboard, Types};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -58,6 +63,45 @@ pub enum Token {
     IntType, FltType, BlnType, NoneType, // Types. Float containt how many decimal places does it ensures.
     Return, // Returning a value
 }
+impl Token {
+    fn to_ftoken(&self, compiler:&Compiler) -> Option<FToken> {
+        match self {
+            // Arithmetic operations
+            Token::Add => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Add))),
+            Token::Rem => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Rem))),
+            Token::Mul => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Mul))),
+            Token::Div => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Div))),
+            Token::Sur => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Sur))),
+            
+            // Logical operations
+            Token::And => Some(FToken::Oper(Oper::Logical(Logical::And))),
+            Token::Or  => Some(FToken::Oper(Oper::Logical(Logical::Or))),
+            Token::Neg => Some(FToken::Oper(Oper::Logical(Logical::Not))),
+
+            // Comparisons
+            Token::Gt  => Some(FToken::Oper(Oper::Comparison(Comparison::Gt))),
+            Token::Lt  => Some(FToken::Oper(Oper::Comparison(Comparison::Lt))),
+            Token::LEt => Some(FToken::Oper(Oper::Comparison(Comparison::Le))),
+            Token::REt => Some(FToken::Oper(Oper::Comparison(Comparison::Ge))),
+            Token::Eq  => Some(FToken::Oper(Oper::Comparison(Comparison::Eq))),
+            Token::NEq => Some(FToken::Oper(Oper::Comparison(Comparison::Neq))),
+
+            // Parentheses
+            Token::LParen => Some(FToken::LParen),
+            Token::RParen => Some(FToken::RParen),
+
+            // Literals
+            Token::Int(i) => Some(FToken::Int(*i)),
+            Token::Flt(f) => Some(FToken::Flt(*f)),
+            Token::Bln(b) => Some(FToken::Bln(*b)),
+            Token::Ident(id) => match compiler.get_variable(id) {
+                Some(s) => Some(FToken::Scr(s.clone())),
+                None => None
+            },
+            _ => None
+        }
+    }
+}
 #[derive(Debug)]
 pub enum CompileError {
     InvalidTokenInAFormula(Token),
@@ -67,7 +111,10 @@ pub enum CompileError {
     LHSDoesntSatisfyValidFormat,
     InvalidRHS(evaluater::FToken),
     TheTokenIsntValue(evaluater::FToken),
-    InvalidFormulaStructure(String)
+    InvalidFormulaStructure(String),
+    UnsupportedLiteralType(evaluater::FToken),
+    CalcationBetweenUnableTypes(Types, Types),
+    UnbalancedParentheses
 }
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -79,7 +126,10 @@ impl std::fmt::Display for CompileError {
             CompileError::LHSDoesntSatisfyValidFormat => String::from("The left hand side doesn't satisfy the valid format."),
             CompileError::InvalidRHS(t) => format!("The rhs, {} can't be assined onto the lhs.", t),
             CompileError::TheTokenIsntValue(t) => format!("The token, {:?} isn't value.", t),
-            CompileError::InvalidFormulaStructure(s) => s.clone()
+            CompileError::InvalidFormulaStructure(s) => s.clone(),
+            CompileError::UnsupportedLiteralType(t) => format!("The token, {} isn't supported as a literal type.", t),
+            CompileError::CalcationBetweenUnableTypes(l, h) => format!("An unsupported calcation occured between {} and {} types.", l, h),
+            CompileError::UnbalancedParentheses => String::from("The number of opening and closing parentheses does not match.")
         };
         write!(f, "{}", result)
     }

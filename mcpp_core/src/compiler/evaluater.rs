@@ -1,24 +1,90 @@
 mod scoreboard;
+pub mod arithmetic_operation;
+pub mod comparison_operation;
+pub mod logical_operation;
 
+use rand::Rng;
 use super::CompileError;
 use super::Token;
 use super::Compiler;
 
+use arithmetic_operation::Arithmetic;
+use logical_operation::Logical;
+use comparison_operation::Comparison;
+
 pub use scoreboard::Scoreboard;
 
-#[derive(Debug, Clone, Copy)]
-pub enum Types { Int, Float }
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Types { Int, Float, Bool }
+impl std::fmt::Display for Types {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Types::Bool => "Bool".to_string(),
+            Types::Float => "Float".to_string(),
+            Types::Int => "Int".to_string()
+        })
+    }
+}
+trait Operator {
+    fn get_priority(&self) -> u32;
+    fn to_str(&self) -> &str;
+}
 #[derive(Debug, Clone)]
-pub enum Operator { Add, Rem, Mul, Div, Sur, Asn }
+pub enum Oper {
+    Arithmetic(Arithmetic),
+    Logical(Logical),
+    Comparison(Comparison)
+}
+
 #[derive(Debug, Clone)]
 pub enum FToken {
     Int(i32),
     Flt(f32),
     Bln(bool),
     Scr(Scoreboard),
-    Oper(Operator),
+    Oper(Oper),
     LParen,
     RParen
+}
+impl Oper {
+    fn get_priority(&self) -> u32 {
+        match self {
+            Oper::Arithmetic(o) => o.get_priority(),
+            Oper::Comparison(o) => o.get_priority(),
+            Oper::Logical(o) => o.get_priority(),
+        }
+    }
+    fn to_str(&self) -> &str {
+        match self {
+            Oper::Arithmetic(o) => o.to_str(),
+            Oper::Comparison(o) => o.to_str(),
+            Oper::Logical(o) => o.to_str(),
+        }
+    }
+}
+impl FToken {
+    fn is_value(&self) -> bool {
+        match self {
+            FToken::Int(_) | FToken::Flt(_) | FToken::Bln(_) | FToken::Scr(_) => true,
+            _ => false
+        }
+    }
+    fn is_operator(&self) -> bool {
+        if let FToken::Oper(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+    fn get_datatype_or(&self) -> Option<Types> {
+        match self {
+            FToken::Bln(_) => Some(Types::Bool),
+            FToken::Int(_) => Some(Types::Int),
+            FToken::Flt(_) => Some(Types::Float),
+            FToken::Scr(s) => Some(s.datatype),
+            _ => None
+        }
+    }
 }
 impl std::fmt::Display for FToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -27,52 +93,28 @@ impl std::fmt::Display for FToken {
             FToken::Flt(f) => f.to_string(),
             FToken::Bln(b) => b.to_string(),
             FToken::Scr(s) => s.get_mcname(),
-            FToken::Oper(o) => scoreboard::oper_to_str(o).to_string(),
+            FToken::Oper(o) => o.to_str().to_string(),
             FToken::LParen => "(".to_string(),
             FToken::RParen => ")".to_string()
         };
         write!(f, "{}", res)
     }
 }
-impl std::fmt::Display for Operator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", scoreboard::oper_to_str(self))
+
+pub fn generate_random_id(length:u32) -> String {
+    let mut rng = rand::rng();
+    (0..length)
+        .map(|_| rng.random_range('a'..='z') as char)
+        .collect::<String>()
+}
+pub fn get_temp_score(datatype:Types) -> Scoreboard {
+    Scoreboard {
+        name: format!("CALC_TEMP_{}", generate_random_id(16)),
+        scope: vec!["TEMP".to_string()],
+        datatype: datatype
     }
 }
 
-fn get_const(value:&FToken) -> Result<(String, Scoreboard), CompileError> {
-    let score = Scoreboard {
-        name : value.to_string(),
-        scope : vec!["CONSTANT".to_string()],
-        datatype : match get_datatype(value) {
-            Some(s) => s,
-            None => return Err(CompileError::TheTokenIsntValue(value.clone()))
-        }
-    };
-    Ok((score.assign(&value)?, score))
-}
-fn get_priority(given:&FToken) -> Option<u32> {
-    match given {
-        FToken::Oper(o) => match o {
-            Operator::Mul | Operator::Div | Operator::Sur => Some(3),
-            Operator::Add | Operator::Rem => Some(2),
-            Operator::Asn => Some(1),
-        },
-        _ => None
-    }
-}
-fn is_value(given:&FToken) -> bool {
-    match given {
-        FToken::Int(_) | FToken::Flt(_) | FToken::Bln(_) | FToken::Scr(_) => true,
-        _ => false
-    }
-}
-fn is_operator(given:&FToken) -> bool {
-    match given {
-        FToken::Oper(_) => true,
-        _ => false
-    }
-}
 fn to_rpn(input:&Vec<FToken>) -> Result<Vec<FToken>, CompileError> {
     let mut queue:Vec<&FToken> = Vec::new();
     let mut stack:Vec<&FToken> = Vec::new();
@@ -82,16 +124,20 @@ fn to_rpn(input:&Vec<FToken>) -> Result<Vec<FToken>, CompileError> {
     }
 
     for current in input.iter() {
-        if is_value(current) {
+        if current.is_value() {
             queue.push(current);
             continue;
-        } else if is_operator(current) {
+        } else if current.is_operator() {
             while let Some(top) = stack.last() {
                 if !matches!(top, FToken::Oper(_)) {
                     break;
                 }
-                if get_priority(current).unwrap() <= get_priority(&top).unwrap() {
-                    queue.push(&stack.pop().unwrap());
+                if let (FToken::Oper(l), FToken::Oper(r)) = (current, top) {
+                    if l.get_priority() < r.get_priority() {
+                        queue.push(&stack.pop().unwrap());
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -123,78 +169,58 @@ fn to_rpn(input:&Vec<FToken>) -> Result<Vec<FToken>, CompileError> {
     }
     Ok(queue.iter().map(|t| (**t).clone()).collect::<Vec<FToken>>())
 }
-fn get_datatype(token:&FToken) -> Option<Types> {
-    match token {
-        FToken::Int(_) => Some(Types::Int),
-        FToken::Flt(_) => Some(Types::Float),
-        FToken::Scr(s) => Some(s.datatype),
-        _ => None
-    }
-}
-
-fn eval_rpn(store_to:&Scoreboard, rpn:&Vec<FToken>) -> Result<String, CompileError> {
-    let mut commands:Vec<String> = Vec::new();
-    let mut stack:Vec<Scoreboard> = Vec::new();
-    let mut temps_to_free:Vec<Scoreboard> = Vec::new();
+/// Evaluate rpn then store result to the "store_to" argument.
+fn eval_rpn(store_to: &Scoreboard, rpn: &Vec<FToken>) -> Result<String, CompileError> {
+    let mut commands: Vec<String> = Vec::new();
+    let mut stack: Vec<FToken> = Vec::new();
+    let mut temp_scores:Vec<Scoreboard> = Vec::new();
 
     for token in rpn.iter() {
-        if is_value(token) {
+        // Move values to the stack
+        if token.is_value() {
             match token {
-                FToken::Scr(s) => {
-                    stack.push(s.clone());
+                FToken::Scr(_) | FToken::Int(_)| FToken::Flt(_) | FToken::Bln(_) => {
+                    stack.push(token.clone());
                 },
-                FToken::Int(_) | FToken::Flt(_) | FToken::Bln(_) => {
-                    let temp_val = Scoreboard {
-                        name: format!("EVAL_LIT_{}", scoreboard::generate_random_id(scoreboard::TEMP_ID_LEN)),
-                        scope: vec!["TEMP".to_string()],
-                        datatype: get_datatype(token).unwrap_or_else(|| {
-                            panic!("Literal token has no datatype: {:?}", token)
-                        }),
-                    };
-                    commands.push(temp_val.assign(token)?);
-                    stack.push(temp_val.clone());
-                    temps_to_free.push(temp_val);
-                },
-                _ => unreachable!("is_value returned true for non-value token")
+                _ => return Err(CompileError::UnsupportedLiteralType(token.clone())),
             }
+        // Calcate if a operator poped
         } else if let FToken::Oper(operator) = token {
+            // Get lhs and rhs
             let rhs_board = stack.pop().ok_or(CompileError::InvalidFormulaStructure("Not enough operands for operator".to_string()))?;
             let lhs_board = stack.pop().ok_or(CompileError::InvalidFormulaStructure("Not enough operands for operator".to_string()))?;
-
-            commands.push(lhs_board.calc(operator, &FToken::Scr(rhs_board.clone()))?);
-            stack.push(lhs_board.clone());
+            // A calc result expect a container scoreboard
+            let result_container = Scoreboard {
+                name: format!("CALC_RESULT_{}", generate_random_id(scoreboard::TEMP_ID_LEN)),
+                scope: vec!["TEMP".to_string()],
+                datatype: lhs_board.get_datatype_or().unwrap()
+            };
+            // let TEMP.CALC_RESULT_XXX = LHS;
+            // TEMP.CALC_RESULT_XXX [OPERATOR]= RHS;
+            commands.push(result_container.assign(&lhs_board)?);
+            commands.push(match operator {
+                Oper::Arithmetic(a) => a.calc(&result_container, &rhs_board)?,
+                Oper::Comparison(c) => c.compare_to_get_boolean(&result_container, &rhs_board)?,
+                Oper::Logical(l) => l.logicalc(&result_container, &rhs_board)?
+            });
+            // Add the scoreboard to temp boards to free the score after it become unnecessary
+            temp_scores.push(result_container.clone());
+            stack.push(FToken::Scr(result_container));
         } else {
-             unreachable!("Non-operator, non-value token found in RPN: {:?}", token);
+            // There's no token that isn't value nor operator in formula token, right?
+            unreachable!("Non-operator, non-value token found in RPN: {:?}", token);
         }
     }
-    commands.push(store_to.assign(&&FToken::Scr(stack.pop().unwrap()))?);
-    for tmp in temps_to_free {
+    if stack.len() == 1 {
+        commands.push(store_to.assign(&&stack.pop().unwrap())?);
+    } else {
+        return Err(CompileError::UnbalancedParentheses);
+    }
+    // Free temp scores generated for calcation
+    for tmp in temp_scores {
         commands.push(tmp.free());
     }
     Ok(commands.join("\n"))
-}
-fn to_ftoken(compiler:&Compiler, token:&Token) -> Option<FToken> {
-    match token {
-        Token::Add => Some(FToken::Oper(Operator::Add)),
-        Token::Rem => Some(FToken::Oper(Operator::Rem)),
-        Token::Mul => Some(FToken::Oper(Operator::Mul)),
-        Token::Div => Some(FToken::Oper(Operator::Div)),
-        Token::Sur => Some(FToken::Oper(Operator::Sur)),
-        Token::Asn => Some(FToken::Oper(Operator::Asn)),
-
-        Token::LParen => Some(FToken::LParen),
-        Token::RParen => Some(FToken::RParen),
-        
-        Token::Int(i) => Some(FToken::Int(*i)),
-        Token::Flt(f) => Some(FToken::Flt(*f)),
-        Token::Bln(b) => Some(FToken::Bln(*b)),
-        Token::Ident(id) => match compiler.get_variable(id) {
-            Some(s) => Some(FToken::Scr(s.clone())),
-            None => None
-        },
-        
-        _ => None
-    }
 }
 
 pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<String, CompileError> {
@@ -228,14 +254,14 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<String, C
     
     let mut f_formula = Vec::new();
     for t in rhs {
-        f_formula.push(match to_ftoken(compiler, t) {
+        f_formula.push(match t.to_ftoken(compiler) {
             Some(o) => o,
             None => return Err(CompileError::InvalidTokenInAFormula(t.clone()))
         })
     }
     let f_formula = f_formula;
     let rpn = &to_rpn(&f_formula)?;
-    let formula_datatype = get_datatype(rpn.get(0).unwrap()).unwrap();
+    let formula_datatype = rpn.get(0).unwrap().get_datatype_or().unwrap();
     let eval_temp = Scoreboard {
         name: "EVAL".to_string(),
         scope: compiler.scope.clone(),
