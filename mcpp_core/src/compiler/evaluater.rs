@@ -1,17 +1,10 @@
-mod scoreboard;
-pub mod arithmetic_operation;
-pub mod comparison_operation;
-pub mod logical_operation;
+pub mod scoreboard;
 
-use rand::Rng;
 use super::CompileError;
 use super::Token;
 use super::Compiler;
 
-use arithmetic_operation::Arithmetic;
-use logical_operation::Logical;
-use comparison_operation::Comparison;
-
+use scoreboard::command_ast::ScoreAST;
 pub use scoreboard::Scoreboard;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,21 +12,31 @@ pub enum Types { Int, Float, Bool }
 impl std::fmt::Display for Types {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", match self {
-            Types::Bool => "Bool".to_string(),
-            Types::Float => "Float".to_string(),
-            Types::Int => "Int".to_string()
+            Types::Bool => "Bool",
+            Types::Float => "Float",
+            Types::Int => "Int"
         })
     }
 }
 trait Operator {
     fn get_priority(&self) -> u32;
     fn to_str(&self) -> &str;
+    fn calc(&self, left:&Scoreboard, right:&FToken) -> Result<Vec<ScoreAST>, CompileError>;
 }
 #[derive(Debug, Clone)]
 pub enum Oper {
-    Arithmetic(Arithmetic),
-    Logical(Logical),
-    Comparison(Comparison)
+    Arithmetic(scoreboard::arithmetic_operation::Arithmetic),
+    Logical(scoreboard::logical_operation::Logical),
+    Comparison(scoreboard::comparison_operation::Comparison)
+}
+impl std::fmt::Display for Oper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Self::Arithmetic(a) => a.to_str(),
+            Self::Comparison(c) => c.to_str(),
+            Self::Logical(l) => l.to_str()
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -64,17 +67,10 @@ impl Oper {
 }
 impl FToken {
     fn is_value(&self) -> bool {
-        match self {
-            FToken::Int(_) | FToken::Flt(_) | FToken::Bln(_) | FToken::Scr(_) => true,
-            _ => false
-        }
+        matches!(self, FToken::Int(_) | FToken::Flt(_) | FToken::Bln(_) | FToken::Scr(_))
     }
     fn is_operator(&self) -> bool {
-        if let FToken::Oper(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, FToken::Oper(_))
     }
     fn get_datatype_or(&self) -> Option<Types> {
         match self {
@@ -98,20 +94,6 @@ impl std::fmt::Display for FToken {
             FToken::RParen => ")".to_string()
         };
         write!(f, "{}", res)
-    }
-}
-
-pub fn generate_random_id(length:u32) -> String {
-    let mut rng = rand::rng();
-    (0..length)
-        .map(|_| rng.random_range('a'..='z') as char)
-        .collect::<String>()
-}
-pub fn get_temp_score(datatype:Types) -> Scoreboard {
-    Scoreboard {
-        name: format!("CALC_TEMP_{}", generate_random_id(16)),
-        scope: vec!["TEMP".to_string()],
-        datatype: datatype
     }
 }
 
@@ -170,8 +152,8 @@ fn to_rpn(input:&Vec<FToken>) -> Result<Vec<FToken>, CompileError> {
     Ok(queue.iter().map(|t| (**t).clone()).collect::<Vec<FToken>>())
 }
 /// Evaluate rpn then store result to the "store_to" argument.
-fn eval_rpn(store_to: &Scoreboard, rpn: &Vec<FToken>) -> Result<String, CompileError> {
-    let mut commands: Vec<String> = Vec::new();
+fn eval_rpn(store_to: &Scoreboard, rpn: &Vec<FToken>) -> Result<Vec<ScoreAST>, CompileError> {
+    let mut commands: Vec<ScoreAST> = Vec::new();
     let mut stack: Vec<FToken> = Vec::new();
     let mut temp_scores:Vec<Scoreboard> = Vec::new();
 
@@ -191,18 +173,20 @@ fn eval_rpn(store_to: &Scoreboard, rpn: &Vec<FToken>) -> Result<String, CompileE
             let lhs_board = stack.pop().ok_or(CompileError::InvalidFormulaStructure("Not enough operands for operator".to_string()))?;
             // A calc result expect a container scoreboard
             let result_container = Scoreboard {
-                name: format!("CALC_RESULT_{}", generate_random_id(scoreboard::TEMP_ID_LEN)),
+                name: format!("CALC_RESULT_{}", scoreboard::generate_random_id(scoreboard::TEMP_ID_LEN)),
                 scope: vec!["TEMP".to_string()],
                 datatype: lhs_board.get_datatype_or().unwrap()
             };
             // let TEMP.CALC_RESULT_XXX = LHS;
             // TEMP.CALC_RESULT_XXX [OPERATOR]= RHS;
-            commands.push(result_container.assign(&lhs_board)?);
-            commands.push(match operator {
-                Oper::Arithmetic(a) => a.calc(&result_container, &rhs_board)?,
-                Oper::Comparison(c) => c.compare_to_get_boolean(&result_container, &rhs_board)?,
-                Oper::Logical(l) => l.logicalc(&result_container, &rhs_board)?
-            });
+            commands.extend(result_container.assign(&lhs_board)?);
+            commands.extend(
+                match operator {
+                    Oper::Arithmetic(a) => a.calc(&result_container, &rhs_board)?,
+                    Oper::Comparison(c) => c.calc(&result_container, &rhs_board)?,
+                    Oper::Logical(l) => l.calc(&result_container, &rhs_board)?
+                }
+            );
             // Add the scoreboard to temp boards to free the score after it become unnecessary
             temp_scores.push(result_container.clone());
             stack.push(FToken::Scr(result_container));
@@ -212,18 +196,18 @@ fn eval_rpn(store_to: &Scoreboard, rpn: &Vec<FToken>) -> Result<String, CompileE
         }
     }
     if stack.len() == 1 {
-        commands.push(store_to.assign(&&stack.pop().unwrap())?);
+        commands.extend(store_to.assign(&&stack.pop().unwrap())?);
     } else {
         return Err(CompileError::UnbalancedParentheses);
     }
     // Free temp scores generated for calcation
     for tmp in temp_scores {
-        commands.push(tmp.free());
+        commands.extend(tmp.free());
     }
-    Ok(commands.join("\n"))
+    Ok(commands)
 }
-
-pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<String, CompileError> {
+// Evaluate a formula constructed with middle notated lhs and rhs
+pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<Vec<ScoreAST>, CompileError> {
     let rhs;
     let lhs;
 
@@ -252,6 +236,7 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<String, C
         rhs = rhs_temp;
     }
     
+    // FTokenising formula
     let mut f_formula = Vec::new();
     for t in rhs {
         f_formula.push(match t.to_ftoken(compiler) {
@@ -259,47 +244,58 @@ pub fn evaluate(compiler:&mut Compiler, formula:&Vec<Token>) -> Result<String, C
             None => return Err(CompileError::InvalidTokenInAFormula(t.clone()))
         })
     }
+    // Make it immutable
     let f_formula = f_formula;
     let rpn = &to_rpn(&f_formula)?;
     let formula_datatype = rpn.get(0).unwrap().get_datatype_or().unwrap();
+    // The scoreboard will be used as temporary result container when there's no lhs.
     let eval_temp = Scoreboard {
-        name: "EVAL".to_string(),
+        name: "EVAL_RESULT".to_string(),
         scope: compiler.scope.clone(),
         datatype: formula_datatype.clone()
     };
+    // Specifing the scoreboard where the result will be stored after the calculation.
     let store_to:Scoreboard = match lhs {
         Some(s) => {
+            // [Identifier] = [Formula]
             if let [Token::Ident(t)] = &s[..] {
                 match compiler.get_variable(&t) {
                     Some(s) => s.clone(),
                     None => return Err(CompileError::UndefinedIdentifierReferenced(t.clone()))
                 }
-            } else if let [Token::Let, Token::Ident(t)] = &s[..] {
+            // let [Identifier] = [Formula]
+            } else if let [Token::Let, Token::Ident(id)] = &s[..] {
                 let _result = &compiler.local_variables.insert(
-                    t.clone(),
+                    id.clone(),
                     Scoreboard {
-                        name: t.clone(),
+                        name: id.clone(),
                         scope: compiler.scope.clone(),
                         datatype: formula_datatype
                     }
                 );
-                compiler.get_variable(&t).unwrap().clone()
+                compiler.get_variable(&id).unwrap().clone()
+            // let [Identifier]:[Type] = [Formula]
             } else if let [Token::Let, Token::Ident(id), Token::Colon, t] = &s[..] {
-                Scoreboard {
-                    name: id.clone(),
-                    scope: compiler.scope.clone(),
-                    datatype: match t {
-                        Token::IntType => Types::Int,
-                        Token::FltType => Types::Float,
-                        _ => return Err(CompileError::UnknownTypeSpecialised(t.to_owned().clone()))
+                let _result = &compiler.local_variables.insert(
+                    id.clone(),
+                    Scoreboard {
+                        name: id.clone(),
+                        scope: compiler.scope.clone(),
+                        datatype: match t {
+                            Token::IntType => Types::Int,
+                            Token::FltType => Types::Float,
+                            _ => return Err(CompileError::UnknownTypeSpecialised(t.to_owned().clone()))
+                        }
                     }
-                }
+                );
+                compiler.get_variable(&id).unwrap().clone()
+            // Other patterns excluding [Formula], it must generate an error
             } else {
                 return Err(CompileError::LHSDoesntSatisfyValidFormat);
             }
         },
+        // [Formula]
         None => eval_temp
     };
-    compiler.local_variables.insert(store_to.name.clone(), store_to.clone());
     Ok(eval_rpn(&store_to, &rpn)?)
 }

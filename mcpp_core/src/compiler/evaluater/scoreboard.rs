@@ -1,38 +1,17 @@
-use std::vec;
+pub mod arithmetic_operation;
+pub mod comparison_operation;
+pub mod logical_operation;
+pub mod command_ast;
 
-use crate::compiler::CompileError;
-
-use super::arithmetic_operation::Arithmetic;
+use command_ast::{FormulaConstructer, ScoreAST};
+use rand::Rng;
 use super::Types;
+use super::CompileError;
 use super::FToken;
 
 pub const NAMESPACE:&str = "MCPP.var";
 pub const FLOAT_MAGNIFICATION:i32 = 1000;
 pub const TEMP_ID_LEN:u32 = 16;
-
-pub trait Constnisable {
-    fn get_const(&self) -> (String, Scoreboard);
-}
-impl Constnisable for i32 {
-    fn get_const(&self) -> (String, Scoreboard) {
-        let score = Scoreboard {
-            name: self.to_string(),
-            scope: vec!["CONSTANT".to_string()],
-            datatype: Types::Int
-        };
-        (score.pure_assign_num(*self), score)
-    }
-}
-impl Constnisable for f32 {
-    fn get_const(&self) -> (String, Scoreboard) {
-        let score = Scoreboard {
-            name: self.to_string(),
-            scope: vec!["CONSTANT".to_string()],
-            datatype: Types::Float
-        };
-        (score.pure_assign_num((*self * FLOAT_MAGNIFICATION as f32) as i32), score)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Scoreboard {
@@ -50,57 +29,63 @@ impl Scoreboard {
     pub fn get_mcname(&self) -> String {
         format!("#{}{}{}", self.scope.join("."), if !self.scope.is_empty() {"."} else {""}, self.name)
     }
-    
-    pub fn pure_assign_score(&self, right:&Scoreboard) -> String {
-        format!(
-            "scoreboard players operation {} {} = {} {}",
-            self.get_mcname(),
-            NAMESPACE,
-            right.get_mcname(),
-            NAMESPACE
-        )
-    }
-    pub fn pure_assign_num(&self, right:i32) -> String {
-        format!("scoreboard players set {} {} {}", self.get_mcname(), NAMESPACE, right)
-    }
-    
-    pub fn fltfy(&self) -> String {
-        Arithmetic::Mul.pure_calc_num(self, FLOAT_MAGNIFICATION)
-    }
-    pub fn intfy(&self) -> String {
-        Arithmetic::Div.pure_calc_num(self, FLOAT_MAGNIFICATION)
-    }
-
-    pub fn assign(&self, right:&FToken) -> Result<String, CompileError> {
+    pub fn assign(&self, right:&FToken) -> Result<Vec<ScoreAST>, CompileError> {
+        let mut f_construct = FormulaConstructer::new();
         match right {
             FToken::Int(i) => match self.datatype {
-                Types::Int => Ok(self.pure_assign_num(*i)),
-                Types::Float => Ok(self.pure_assign_num(i * FLOAT_MAGNIFICATION)),
+                Types::Int => Ok(
+                    f_construct
+                        .assign_num(&self, *i)
+                        .build()
+                ),
+                Types::Float => Ok(
+                    f_construct
+                        .assign_num(&self, *i * FLOAT_MAGNIFICATION)
+                        .build()
+                ),
                 _ => Err(CompileError::InvalidRHS(right.clone()))
             },
             FToken::Flt(f) => match self.datatype {
-                Types::Int => Ok(self.pure_assign_num(*f as i32)),
-                Types::Float => Ok(self.pure_assign_num((*f * (FLOAT_MAGNIFICATION as f32)) as i32)),
+                Types::Int => Ok(
+                    f_construct
+                        .assign_num(&self, *f as i32)
+                        .build()
+                ),
+                Types::Float => Ok(
+                    f_construct
+                        .assign_num(&self, (*f * (FLOAT_MAGNIFICATION as f32)) as i32)
+                        .build()
+                ),
                 _ => Err(CompileError::InvalidRHS(right.clone()))
             },
             FToken::Scr(s) => {
                 match self.datatype {
                     Types::Int => match s.datatype {
-                        Types::Int => Ok(self.pure_assign_score(s)),
-                        Types::Float => Ok(format!(
-                            "{}\n{}",
-                            self.pure_assign_score(s),
-                            &Arithmetic::Div.pure_calc_num(self, FLOAT_MAGNIFICATION)
-                        )),
+                        Types::Int => Ok(
+                            f_construct
+                                .assign_score(&self, s)
+                                .build()
+                        ),
+                        Types::Float => Ok(
+                            f_construct
+                                .assign_score(&self, s)
+                                .intify(&self)
+                                .build()
+                        ),
                         _ => Err(CompileError::InvalidRHS(right.clone()))
                     },
                     Types::Float => match s.datatype {
-                        Types::Int => Ok(format!(
-                            "{}\n{}",
-                            self.pure_assign_score(s),
-                            &Arithmetic::Mul.pure_calc_num(self, FLOAT_MAGNIFICATION)
-                        )),
-                        Types::Float => Ok(self.pure_assign_score(s)),
+                        Types::Int => Ok(
+                            f_construct
+                                .assign_score(&self, s)
+                                .fltify(&self)
+                                .build()
+                        ),
+                        Types::Float => Ok(
+                            f_construct
+                                .assign_score(&self, s)
+                                .build()
+                        ),
                         _ => Err(CompileError::InvalidRHS(right.clone()))
                     },
                     _ => Err(CompileError::InvalidRHS(right.clone()))
@@ -109,7 +94,28 @@ impl Scoreboard {
             _ => Err(CompileError::TheTokenIsntValue(right.clone()))
         }
     }
-    pub fn free(&self) -> String {
-        format!("scoreboard players reset {} {}", self.get_mcname(), NAMESPACE)
+    pub fn free(&self) -> Vec<ScoreAST> {
+        FormulaConstructer::new().free(&self).build()
+    }
+}
+
+pub fn generate_random_id(length:u32) -> String {
+    let mut rng = rand::rng();
+    (0..length)
+        .map(|_| rng.random_range('a'..='z') as char)
+        .collect::<String>()
+}
+pub fn get_calc_temp(datatype:Types) -> Scoreboard {
+    Scoreboard {
+        name: format!("CALC_TEMP_{}", generate_random_id(16)),
+        scope: vec!["TEMP".to_string()],
+        datatype: datatype
+    }
+}
+pub fn get_type_adjusted_temp(datatype:Types) -> Scoreboard {
+    Scoreboard {
+        name: format!("CALC_TYPE_ADJUSTED_{}", generate_random_id(16)),
+        scope: vec!["TEMP".to_string()],
+        datatype: datatype
     }
 }

@@ -1,9 +1,10 @@
 use std::{collections::HashMap, vec};
 
 use evaluater::Oper;
-use evaluater::arithmetic_operation::Arithmetic;
-use evaluater::logical_operation::Logical;
-use evaluater::comparison_operation::Comparison;
+use evaluater::scoreboard::arithmetic_operation::Arithmetic;
+use evaluater::scoreboard::logical_operation::Logical;
+use evaluater::scoreboard::comparison_operation::Comparison;
+use crate::compiler::evaluater::scoreboard::command_ast::Serialise;
 
 pub mod evaluater;
 pub mod tokeniser;
@@ -113,7 +114,7 @@ pub enum CompileError {
     TheTokenIsntValue(evaluater::FToken),
     InvalidFormulaStructure(String),
     UnsupportedLiteralType(evaluater::FToken),
-    CalcationBetweenUnableTypes(Types, Types),
+    UndefinedOperation(Types, Oper, Types),
     UnbalancedParentheses
 }
 impl std::fmt::Display for CompileError {
@@ -128,7 +129,7 @@ impl std::fmt::Display for CompileError {
             CompileError::TheTokenIsntValue(t) => format!("The token, {:?} isn't value.", t),
             CompileError::InvalidFormulaStructure(s) => s.clone(),
             CompileError::UnsupportedLiteralType(t) => format!("The token, {} isn't supported as a literal type.", t),
-            CompileError::CalcationBetweenUnableTypes(l, h) => format!("An unsupported calcation occured between {} and {} types.", l, h),
+            CompileError::UndefinedOperation(l, o, h) => format!("An unsupported calcation occured, {} {} {}", l, o, h),
             CompileError::UnbalancedParentheses => String::from("The number of opening and closing parentheses does not match.")
         };
         write!(f, "{}", result)
@@ -184,9 +185,11 @@ impl Compiler {
         let result = {
             let mut result = Vec::new();
             for l in lines {
-                result.push(evaluate(self, &l)?)
+                result.extend(evaluate(self, &l)?)
             }
             result
+                .iter()
+                .map(|ast| ast.clone().serialise()).collect::<Vec<String>>()
         }.join("\n");
         Ok(result)
     }
