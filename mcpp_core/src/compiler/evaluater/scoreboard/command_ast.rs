@@ -1,35 +1,36 @@
-use crate::evaluater::Types;
+use crate::evaluater::{Type, scoreboard::get_calc_temp};
 
-use super::{comparison_operation, Scoreboard};
+use super::{comparison_operation::{self, Comparison}, Scoreboard};
 use crate::compiler::evaluater::Operator;
-
 
 use super::{NAMESPACE, FLOAT_MAGNIFICATION};
 
 #[derive(Debug, Clone)]
-pub enum ScoreAST {
+pub enum CommandAST {
     CalcScore(CalcScore),
     AddRemNum(AddRemNum),
     AssignScore(AssignScore),
     AssignNum(AssignNum),
     BoolifyCondition(ExecuteConstructer),
-    Free(Free)
+    Free(Free),
+    Native(String),
 }
-impl Serialise for ScoreAST {
+impl Serialise for CommandAST {
     fn serialise(&self) -> String {
         match self {
-            ScoreAST::AddRemNum(a) => a.serialise(),
-            ScoreAST::AssignNum(a) => a.serialise(),
-            ScoreAST::AssignScore(a) => a.serialise(),
-            ScoreAST::CalcScore(c) => c.serialise(),
-            ScoreAST::BoolifyCondition(b) => b.serialise(),
-            ScoreAST::Free(f) => f.serialise()
+            CommandAST::AddRemNum(a) => a.serialise(),
+            CommandAST::AssignNum(a) => a.serialise(),
+            CommandAST::AssignScore(a) => a.serialise(),
+            CommandAST::CalcScore(c) => c.serialise(),
+            CommandAST::BoolifyCondition(b) => b.clone().build(),
+            CommandAST::Free(f) => f.serialise(),
+            CommandAST::Native(s) => s.clone()
         }
     }
 }
 
 pub struct FormulaConstructer {
-    commands: Vec<ScoreAST>,
+    commands: Vec<CommandAST>,
     temp_scores: Vec<Scoreboard>
 }
 
@@ -37,7 +38,7 @@ fn get_const(constant:i32) -> Scoreboard {
     Scoreboard {
         name: constant.to_string(),
         scope: vec!["CONSTANT".to_string()],
-        datatype: Types::Int
+        datatype: Type::Int
     }
 }
 
@@ -49,7 +50,7 @@ impl FormulaConstructer {
         }
     }
     pub fn calc_score(&mut self, left:&Scoreboard, operator:String, right:&Scoreboard) -> &mut Self {
-        self.commands.push(ScoreAST::CalcScore(
+        self.commands.push(CommandAST::CalcScore(
             CalcScore {
                 left: ScoreTarget::from(left),
                 operator: operator,
@@ -60,12 +61,12 @@ impl FormulaConstructer {
     }
     pub fn calc_num(&mut self, left:&Scoreboard, operator:String, right:i32) -> &mut Self {
         let constant = get_const(right);
-        self.commands.push(ScoreAST::AssignNum(
+        self.commands.push(CommandAST::AssignNum(
             AssignNum { left: ScoreTarget::from(&constant), right: right }
         ));
         self.temp_scores.push(constant);
         let constant = self.temp_scores.last().unwrap();
-        self.commands.push(ScoreAST::CalcScore(
+        self.commands.push(CommandAST::CalcScore(
             CalcScore {
                 left: ScoreTarget::from(left),
                 operator: operator,
@@ -75,19 +76,19 @@ impl FormulaConstructer {
         return self
     }
     pub fn add_rem_num(&mut self, left:&Scoreboard, add_rem:String, right:i32) -> &mut Self {
-        self.commands.push(ScoreAST::AddRemNum(
+        self.commands.push(CommandAST::AddRemNum(
             AddRemNum { left: ScoreTarget::from(left), add_rem: add_rem, right: right }
         ));
         self
     }
     pub fn assign_score(&mut self, left:&Scoreboard, right:&Scoreboard) -> &mut Self {
-        self.commands.push(ScoreAST::AssignScore(
+        self.commands.push(CommandAST::AssignScore(
             AssignScore { left: ScoreTarget::from(left), right: ScoreTarget::from(right) }
         ));
         self
     }
     pub fn assign_num(&mut self, left:&Scoreboard, right:i32) -> &mut Self {
-        self.commands.push(ScoreAST::AssignNum(
+        self.commands.push(CommandAST::AssignNum(
             AssignNum { left: ScoreTarget::from(left), right: right }
         ));
         self
@@ -99,9 +100,9 @@ impl FormulaConstructer {
         self.calc_num(target, "*=".to_string(), FLOAT_MAGNIFICATION)
     }
     pub fn boolify_score_comparison(&mut self, left:&Scoreboard, comparison:String, right:&Scoreboard) -> &mut Self {
-        self.commands.push(ScoreAST::BoolifyCondition(
+        self.commands.push(CommandAST::BoolifyCondition(
             ExecuteConstructer {
-                conditions: vec![ConditionAST::Comparison(Comparison {
+                conditions: vec![ConditionAST::Comparison(ComparisonAST {
                     is_unless: false,
                     left: ScoreTarget::from(left),
                     comparison: comparison,
@@ -114,12 +115,12 @@ impl FormulaConstructer {
     pub fn boolify_num_comparison(&mut self, left:&Scoreboard, comparison:String, right:i32) -> &mut Self {
         let constant = get_const(right);
         let const_target = ScoreTarget::from(&constant);
-        self.commands.push(ScoreAST::AssignNum(
+        self.commands.push(CommandAST::AssignNum(
             AssignNum { left: const_target.clone(), right: right }
         ));
-        self.commands.push(ScoreAST::BoolifyCondition(
+        self.commands.push(CommandAST::BoolifyCondition(
             ExecuteConstructer {
-                conditions: vec![ConditionAST::Comparison(Comparison {
+                conditions: vec![ConditionAST::Comparison(ComparisonAST {
                     is_unless: false,
                     left: ScoreTarget::from(left),
                     comparison: comparison,
@@ -132,13 +133,13 @@ impl FormulaConstructer {
     }
     pub fn validate_bool(&mut self, target:&Scoreboard) -> &mut Self {
         let constant_0 = get_const(0);
-        self.commands.push(ScoreAST::AssignNum(
+        self.commands.push(CommandAST::AssignNum(
             AssignNum { left: ScoreTarget::from(&constant_0), right: 0 }
         ));
         self.temp_scores.push(constant_0);
-        self.commands.push(ScoreAST::BoolifyCondition(
+        self.commands.push(CommandAST::BoolifyCondition(
             ExecuteConstructer {
-                conditions: vec![ConditionAST::Comparison(Comparison {
+                conditions: vec![ConditionAST::Comparison(ComparisonAST {
                     is_unless: true,
                     left: ScoreTarget::from(target),
                     comparison: "==".to_string(),
@@ -149,14 +150,14 @@ impl FormulaConstructer {
         self
     }
     pub fn free(&mut self, target:&Scoreboard) -> &mut Self {
-        self.commands.push(ScoreAST::Free(
+        self.commands.push(CommandAST::Free(
             Free { target: ScoreTarget::from(target) }
         ));
         self
     }
-    pub fn build(&mut self) -> Vec<ScoreAST> {
+    pub fn build(&mut self) -> Vec<CommandAST> {
         for tmp in &self.temp_scores {
-            self.commands.push(ScoreAST::Free(
+            self.commands.push(CommandAST::Free(
                 Free { target: ScoreTarget::from(tmp) }
             ));
         }
@@ -255,13 +256,13 @@ pub struct BoolifyCondition {
 }
 impl Serialise for BoolifyCondition {
     fn serialise(&self) -> String {
-        let temp = super::get_calc_temp(Types::Bool);
+        let temp = get_calc_temp(Type::Bool);
         let temp_target = ScoreTarget::from(&temp);
         [
             AssignNum { left:temp_target.clone(), right: 0 }.serialise(),
             format!(
                 "{}{}",
-                self.execute.serialise(),
+                self.execute.clone().build(),
                 AssignNum { left: temp_target.clone(), right: 1 }.serialise()
             ),
             AssignScore {
@@ -287,8 +288,25 @@ impl Serialise for Free {
 pub struct ExecuteConstructer {
     conditions: Vec<ConditionAST>
 }
-impl Serialise for ExecuteConstructer {
-    fn serialise(&self) -> String {
+impl ExecuteConstructer {
+    pub fn new() -> Self {
+        ExecuteConstructer {
+            conditions: Vec::new()
+        }
+    }
+    pub fn compare(mut self, lhs:&Scoreboard, operator:&Comparison, rhs:&Scoreboard) -> Self {
+        let is_unless = matches!(operator, &Comparison::Neq);
+        let neq = Comparison::Neq.to_str();
+        let ast= ComparisonAST {
+            is_unless: is_unless,
+            left: ScoreTarget::from(lhs),
+            right: ScoreTarget::from(rhs),
+            comparison: (if is_unless {neq} else {operator.to_str()}).to_string()
+        };
+        self.conditions.push(ConditionAST::Comparison(ast));
+        self
+    }
+    pub fn build(self) -> String {
         format!(
             "execute {} run ",
             self.conditions
@@ -296,12 +314,17 @@ impl Serialise for ExecuteConstructer {
                 .map(|c| c.serialise())
                 .collect::<Vec<String>>()
                 .join(" ")
-        )
+        )   
+    }
+}
+impl From<Vec<ConditionAST>> for ExecuteConstructer {
+    fn from(value: Vec<ConditionAST>) -> Self {
+        Self { conditions: value }
     }
 }
 #[derive(Debug, Clone)]
-enum ConditionAST {
-    Comparison(Comparison)
+pub enum ConditionAST {
+    Comparison(ComparisonAST)
 }
 impl Serialise for ConditionAST {
     fn serialise(&self) -> String {
@@ -312,13 +335,13 @@ impl Serialise for ConditionAST {
 }
 
 #[derive(Debug, Clone)]
-struct Comparison {
+pub struct ComparisonAST {
     is_unless: bool,
     left: ScoreTarget,
     comparison: String,
     right: ScoreTarget
 }
-impl Serialise for Comparison {
+impl Serialise for ComparisonAST {
     fn serialise(&self) -> String {
         let neq = comparison_operation::Comparison::Neq.to_str();
         let eq = comparison_operation::Comparison::Eq.to_str();

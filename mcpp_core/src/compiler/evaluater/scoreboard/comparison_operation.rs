@@ -1,9 +1,9 @@
 use super::super::Operator;
-use super::command_ast::{FormulaConstructer, ScoreAST};
+use super::command_ast::{FormulaConstructer, CommandAST};
 use super::{get_type_adjusted_temp, Scoreboard, FLOAT_MAGNIFICATION};
 use crate::compiler::CompileError;
-use crate::compiler::FToken;
-use crate::evaluater::{Oper, Types};
+use crate::evaluater::{Oper, Type};
+use crate::compiler::ast::serialiser::IToken;
 
 #[derive(Debug, Clone)]
 pub enum Comparison { Gt, Ge, Lt, Le, Eq, Neq }
@@ -22,18 +22,28 @@ impl Operator for Comparison {
             Self::Neq => "!="
         }
     }
-    fn calc(&self, left:&Scoreboard, right:&FToken) -> Result<Vec<ScoreAST>, CompileError> {
+    fn calc(&self, left:&Scoreboard, right:&IToken) -> Result<Vec<CommandAST>, CompileError> {
         match right {
-            FToken::Scr(s) => self.compare_score(left, s),
-            FToken::Int(i) => self.compare_int(left, *i),
-            FToken::Flt(f) => self.compare_float(left, *f),
-            FToken::Bln(b) => self.compare_bool(left, *b),
+            IToken::Scr(s) => self.compare_score(left, s),
+            IToken::Int(i) => self.compare_int(left, *i),
+            IToken::Flt(f) => self.compare_float(left, *f),
+            IToken::Bln(b) => self.compare_bool(left, *b),
             _ => Err(CompileError::TheTokenIsntValue(right.clone()))
+        }
+    }
+    fn get_type(&self, left:&Type, right:&Type) -> Option<Type> {
+        if left == right {
+            return Some(Type::Bool)
+        }
+        match (left, right) {
+            (Type::Int, Type::Float) => Some(Type::Bool),
+            (Type::Float, Type::Int) => Some(Type::Bool),
+            _ => None
         }
     }
 }
 impl Comparison {
-    fn compare_score(&self, left:&Scoreboard, right:&Scoreboard) -> Result<Vec<ScoreAST>, CompileError> {
+    fn compare_score(&self, left:&Scoreboard, right:&Scoreboard) -> Result<Vec<CommandAST>, CompileError> {
         let mut f_constract = FormulaConstructer::new();
         let undefined_operation_occured = CompileError::UndefinedOperation(
             left.datatype.clone(),
@@ -42,15 +52,15 @@ impl Comparison {
         );
         let cmp = self.to_str().to_string();
         match (left.datatype, right.datatype) {
-            (Types::Int, Types::Int) | (Types::Float, Types::Float) | (Types::Bool, Types::Bool) => Ok(
+            (Type::Int, Type::Int) | (Type::Float, Type::Float) | (Type::Bool, Type::Bool) => Ok(
                 f_constract
                     .boolify_score_comparison(
                         left, cmp, right
                     )
                     .build()
             ),
-            (Types::Float, Types::Int) => Ok({
-                let adjusted = get_type_adjusted_temp(Types::Float);
+            (Type::Float, Type::Int) => Ok({
+                let adjusted = get_type_adjusted_temp(Type::Float);
                 f_constract
                     .assign_score(&adjusted, right)
                     .fltify(&adjusted)
@@ -58,8 +68,8 @@ impl Comparison {
                     .free(&adjusted)
                     .build()
             }),
-            (Types::Int, Types::Float) => Ok({
-                let adjusted = get_type_adjusted_temp(Types::Float);
+            (Type::Int, Type::Float) => Ok({
+                let adjusted = get_type_adjusted_temp(Type::Float);
                 f_constract
                     .assign_score(&adjusted, left)
                     .fltify(&adjusted)
@@ -70,21 +80,21 @@ impl Comparison {
             _ => Err(undefined_operation_occured)
         }
     }
-    fn compare_int(&self, left:&Scoreboard, right:i32) -> Result<Vec<ScoreAST>, CompileError> {
+    fn compare_int(&self, left:&Scoreboard, right:i32) -> Result<Vec<CommandAST>, CompileError> {
         let mut f_constract = FormulaConstructer::new();
         let undefined_operation_occured = CompileError::UndefinedOperation(
             left.datatype.clone(),
             Oper::Comparison(self.clone()),
-            Types::Int
+            Type::Int
         );
         let cmp = self.to_str().to_string();
         match left.datatype {
-            Types::Int => Ok(
+            Type::Int => Ok(
                 f_constract
                     .boolify_num_comparison(left, cmp, right)
                     .build()
             ),
-            Types::Float => Ok(
+            Type::Float => Ok(
                 f_constract
                     .boolify_num_comparison(left, cmp, right * FLOAT_MAGNIFICATION)
                     .build()
@@ -92,18 +102,18 @@ impl Comparison {
             _ => Err(undefined_operation_occured)
         }
     }
-    fn compare_float(&self, left:&Scoreboard, right:f32) -> Result<Vec<ScoreAST>, CompileError> {
+    fn compare_float(&self, left:&Scoreboard, right:f32) -> Result<Vec<CommandAST>, CompileError> {
         let mut f_constract = FormulaConstructer::new();
         let undefined_operation_occured = CompileError::UndefinedOperation(
             left.datatype.clone(),
             Oper::Comparison(self.clone()),
-            Types::Int
+            Type::Int
         );
         let scaled = (right * FLOAT_MAGNIFICATION as f32).floor() as i32;
         let cmp = self.to_str().to_string();
         match left.datatype {
-            Types::Int => {
-                let adjusted = get_type_adjusted_temp(Types::Float);
+            Type::Int => {
+                let adjusted = get_type_adjusted_temp(Type::Float);
                 Ok(
                     f_constract
                         .assign_score(&adjusted, left)
@@ -113,7 +123,7 @@ impl Comparison {
                         .build()
                 )
             },
-            Types::Float => Ok(
+            Type::Float => Ok(
                 f_constract
                     .boolify_num_comparison(left, cmp, scaled)
                     .build()
@@ -121,15 +131,15 @@ impl Comparison {
             _ => Err(undefined_operation_occured)
         }
     }
-    fn compare_bool(&self, left:&Scoreboard, right:bool) -> Result<Vec<ScoreAST>, CompileError> {
+    fn compare_bool(&self, left:&Scoreboard, right:bool) -> Result<Vec<CommandAST>, CompileError> {
         let mut f_constract = FormulaConstructer::new();
         let undefined_operation_occured = CompileError::UndefinedOperation(
             left.datatype.clone(),
             Oper::Comparison(self.clone()),
-            Types::Int
+            Type::Int
         );
         match left.datatype {
-            Types::Bool => match self {
+            Type::Bool => match self {
                 Self::Eq => Ok(
                     f_constract
                         .boolify_num_comparison(left, match right {

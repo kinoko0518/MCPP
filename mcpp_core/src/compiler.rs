@@ -1,15 +1,18 @@
-use std::{collections::HashMap, vec};
-
+use ast::serialiser::MCFunction;
+use ast::serialiser::MCFunctionizable;
+use ast::syntax_analyser;
+use ast::SyntaxError;
+use evaluater::scoreboard::command_ast::CommandAST;
 use evaluater::Oper;
-use evaluater::scoreboard::arithmetic_operation::Arithmetic;
-use evaluater::scoreboard::logical_operation::Logical;
-use evaluater::scoreboard::comparison_operation::Comparison;
-use crate::compiler::evaluater::scoreboard::command_ast::Serialise;
 
+pub mod save;
 pub mod evaluater;
 pub mod tokeniser;
+pub mod ast;
 
-use evaluater::{evaluate, FToken, Scoreboard, Types};
+use crate::compiler::ast::serialiser::IToken;
+use crate::evaluater::Type;
+use crate::evaluater::Scoreboard;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -65,61 +68,35 @@ pub enum Token {
     Return, // Returning a value
 }
 impl Token {
-    fn to_ftoken(&self, compiler:&Compiler) -> Option<FToken> {
+    fn to_type(&self) -> Option<Type> {
         match self {
-            // Arithmetic operations
-            Token::Add => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Add))),
-            Token::Rem => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Rem))),
-            Token::Mul => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Mul))),
-            Token::Div => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Div))),
-            Token::Sur => Some(FToken::Oper(Oper::Arithmetic(Arithmetic::Sur))),
-            
-            // Logical operations
-            Token::And => Some(FToken::Oper(Oper::Logical(Logical::And))),
-            Token::Or  => Some(FToken::Oper(Oper::Logical(Logical::Or))),
-            Token::Neg => Some(FToken::Oper(Oper::Logical(Logical::Not))),
-
-            // Comparisons
-            Token::Gt  => Some(FToken::Oper(Oper::Comparison(Comparison::Gt))),
-            Token::Lt  => Some(FToken::Oper(Oper::Comparison(Comparison::Lt))),
-            Token::LEt => Some(FToken::Oper(Oper::Comparison(Comparison::Le))),
-            Token::REt => Some(FToken::Oper(Oper::Comparison(Comparison::Ge))),
-            Token::Eq  => Some(FToken::Oper(Oper::Comparison(Comparison::Eq))),
-            Token::NEq => Some(FToken::Oper(Oper::Comparison(Comparison::Neq))),
-
-            // Parentheses
-            Token::LParen => Some(FToken::LParen),
-            Token::RParen => Some(FToken::RParen),
-
-            // Literals
-            Token::Int(i) => Some(FToken::Int(*i)),
-            Token::Flt(f) => Some(FToken::Flt(*f)),
-            Token::Bln(b) => Some(FToken::Bln(*b)),
-            Token::Ident(id) => match compiler.get_variable(id) {
-                Some(s) => Some(FToken::Scr(s.clone())),
-                None => None
-            },
+            Token::IntType => Some(Type::Int),
+            Token::FltType => Some(Type::Float),
+            Token::BlnType => Some(Type::Bool),
             _ => None
         }
     }
 }
 #[derive(Debug)]
 pub enum CompileError {
+    ASyntaxErrorOccured(SyntaxError),
     InvalidTokenInAFormula(Token),
     EmptyFormulaGiven,
     UndefinedIdentifierReferenced(String),
     UnknownTypeSpecialised(Token),
     LHSDoesntSatisfyValidFormat,
-    InvalidRHS(evaluater::FToken),
-    TheTokenIsntValue(evaluater::FToken),
+    InvalidRHS(IToken),
+    TheTokenIsntValue(IToken),
     InvalidFormulaStructure(String),
-    UnsupportedLiteralType(evaluater::FToken),
-    UndefinedOperation(Types, Oper, Types),
-    UnbalancedParentheses
+    UnsupportedLiteralType(IToken),
+    UndefinedOperation(Type, Oper, Type),
+    UnbalancedParentheses,
+    TheTypeOfAIndentifierWontBeConfirmed(String)
 }
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let result = match self {
+            CompileError::ASyntaxErrorOccured(a) => a.to_string(),
             CompileError::InvalidTokenInAFormula(t) => format!("An invalid token, {:?} exists in the formula.", t),
             CompileError::EmptyFormulaGiven => String::from("An empty formula was given."),
             CompileError::UndefinedIdentifierReferenced(id) => format!("A identifer, {} was referenced but undefined.", id),
@@ -130,67 +107,67 @@ impl std::fmt::Display for CompileError {
             CompileError::InvalidFormulaStructure(s) => s.clone(),
             CompileError::UnsupportedLiteralType(t) => format!("The token, {} isn't supported as a literal type.", t),
             CompileError::UndefinedOperation(l, o, h) => format!("An unsupported calcation occured, {} {} {}", l, o, h),
-            CompileError::UnbalancedParentheses => String::from("The number of opening and closing parentheses does not match.")
+            CompileError::UnbalancedParentheses => String::from("The number of opening and closing parentheses does not match."),
+            CompileError::TheTypeOfAIndentifierWontBeConfirmed(t) => format!("The type of an identifer, {} won't be confirmed at the time of compiling.", t)
         };
         write!(f, "{}", result)
     }
 }
-
 pub struct Compiler {
-    pub scope: Vec<String>,
-    pub inherited_variables: HashMap<String, Scoreboard>,
-    pub local_variables: HashMap<String, Scoreboard>,
+    pub namespace: String,
+    pub compiled: Vec<MCFunction>,
+    pub variables: Vec<Scoreboard>,
+    pub functions: Vec<MCFunction>,
+    pub scope: Vec<String>
+}
+impl From<&str> for Compiler {
+    fn from(value: &str) -> Self {
+        Self {
+            namespace: value.to_string(),
+            compiled: Vec::new(),
+            variables: Vec::new(),
+            functions: Vec::new(),
+            scope: Vec::new()
+        }
+    }
 }
 impl Compiler {
-    fn get_variable(&self, name:&str) -> Option<&Scoreboard> {
-        match self.local_variables.get(name) {
-            Some(s) => Some(s),
-            None => self.inherited_variables.get(name)
+    fn get_score(&self, name:&String) -> Option<&Scoreboard> {
+        self
+            .variables
+            .iter()
+            .find(|score| &score.name == name)
+    }
+    fn get_func(&self, name:&String) -> Option<&MCFunction> {
+        self
+            .functions
+            .iter()
+            .find(|func| &func.name == name)
+    }
+    fn leave_current_scope(&mut self) -> Vec<CommandAST> {
+        let mut res:Vec<CommandAST> = Vec::new();
+        for v in 0..=self.variables.len() {
+            if self.variables.get(v).unwrap().scope.len() >= self.scope.len() {
+                res.extend(self.variables.remove(v).free());
+            }
         }
+        res
     }
-    pub fn new() -> Compiler {
-        Compiler {
-            scope: Vec::new(),
-            inherited_variables: HashMap::new(),
-            local_variables: HashMap::new()
-        }
+    fn serialise_mcfunction<T:MCFunctionizable>(&mut self, mcfunctionizable:&T) -> Result<(), CompileError> {
+        let compiled = mcfunctionizable.mcfunctionate(self)?;
+        self.compiled.push(compiled.clone());
+        self.functions.push(compiled);
+        Ok(())
     }
-    pub fn mark_as_exists(&mut self, name:&str, data_type:&Types) {
-        self.local_variables.insert(
-            name.to_string(),
-            Scoreboard {
-                name: name.to_string(),
-                scope: vec![],
-                datatype: *data_type
-            }
-        );
-    }
-    pub fn compile(&mut self, input:&str) -> Result<String, CompileError> {
-        let lines = {
-            let mut lines:Vec<Vec<Token>> = Vec::new();
-            let mut current_line:Vec<Token> = Vec::new();
-            for t in tokeniser::tokenize(input.to_string()) {
-                if let Token::Semicolon = t {
-                    lines.push(current_line.clone());
-                    current_line.clear();
-                } else {
-                    current_line.push(t.clone());
-                }
-            }
-            if !current_line.is_empty() {
-                lines.push(current_line.clone());
-            }
-            lines
+    pub fn evaluate(mut self, target:String) -> Result<String, CompileError> {
+        let mut s_analyser = syntax_analyser
+            ::SyntaxAnalyser
+            ::from(tokeniser::tokenize(target));
+        let codeblock = match s_analyser.get_block() {
+            Ok(o) => o,
+            Err(e) => Err(CompileError::ASyntaxErrorOccured(e))?
         };
-        let result = {
-            let mut result = Vec::new();
-            for l in lines {
-                result.extend(evaluate(self, &l)?)
-            }
-            result
-                .iter()
-                .map(|ast| ast.clone().serialise()).collect::<Vec<String>>()
-        }.join("\n");
-        Ok(result)
+        let mcfunc = codeblock.mcfunctionate(&mut self)?;
+        Ok(mcfunc.inside.clone())
     }
 }

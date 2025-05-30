@@ -18,7 +18,7 @@ impl eframe::App for MyApp {
                 ui.label("Evaluater");
                 ui.add_sized(ui.available_size() - Vec2 { x: 0., y: 40. }, egui::TextEdit::multiline(&mut self.text));
                 if ui.button("Compile then Copy").clicked() {
-                    match compiler::Compiler::new().compile(&self.text) {
+                    match compiler::Compiler::from("MCPP").evaluate(self.text.clone()) {
                         Ok(o) => {
                             let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
                             ctx.set_contents(o).unwrap();
